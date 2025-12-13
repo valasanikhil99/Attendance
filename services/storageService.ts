@@ -6,22 +6,29 @@ const ATTENDANCE_KEY = 'classtrack_attendance';
 const HOLIDAYS_KEY = 'classtrack_holidays';
 const SESSION_KEY = 'classtrack_session';
 
-// Helper to simulate network delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-// Safer ID generator that works in all contexts
-const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+const safeParse = <T>(raw: string | null, fallback: T): T => {
+  try {
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const generateId = () =>
+  crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
 
 export const StorageService = {
-  // User Auth
+  /* ---------------- AUTH ---------------- */
+
   async login(rollNumber: string, password: string): Promise<User | null> {
-    await delay(500);
-    const usersRaw = localStorage.getItem(USERS_KEY);
-    const users: User[] = usersRaw ? JSON.parse(usersRaw) : [];
-    
-    // For demo purposes, password check is skipped or basic. 
-    // In real app, this would verify hash.
+    await delay(300);
+    if (!password) return null;
+
+    const users = safeParse<User[]>(localStorage.getItem(USERS_KEY), []);
     const user = users.find(u => u.rollNumber === rollNumber);
+
     if (user) {
       localStorage.setItem(SESSION_KEY, JSON.stringify(user));
       return user;
@@ -30,117 +37,131 @@ export const StorageService = {
   },
 
   async register(name: string, rollNumber: string, password: string): Promise<User> {
-    await delay(500);
-    const usersRaw = localStorage.getItem(USERS_KEY);
-    const users: User[] = usersRaw ? JSON.parse(usersRaw) : [];
-    
-    if (users.find(u => u.rollNumber === rollNumber)) {
-      throw new Error("User already exists");
+    await delay(300);
+    if (!password) throw new Error('Password required');
+
+    const users = safeParse<User[]>(localStorage.getItem(USERS_KEY), []);
+
+    if (users.some(u => u.rollNumber === rollNumber)) {
+      throw new Error('User already exists');
     }
 
     const newUser: User = { id: generateId(), name, rollNumber };
-    users.push(newUser); // In real app, store hashed password
+    users.push(newUser);
+
     localStorage.setItem(USERS_KEY, JSON.stringify(users));
     localStorage.setItem(SESSION_KEY, JSON.stringify(newUser));
+
     return newUser;
   },
 
   async logout(): Promise<void> {
+    await delay(100);
     localStorage.removeItem(SESSION_KEY);
   },
 
   async getSession(): Promise<User | null> {
-    const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? JSON.parse(raw) : null;
+    return safeParse<User | null>(localStorage.getItem(SESSION_KEY), null);
   },
 
-  // Attendance
+  /* ---------------- ATTENDANCE ---------------- */
+
   async getAttendance(userId: string): Promise<AttendanceRecord[]> {
-    const raw = localStorage.getItem(ATTENDANCE_KEY);
-    const allRecords: AttendanceRecord[] = raw ? JSON.parse(raw) : [];
-    // Fix: Use userId + '_' to prevent partial matches (e.g. user '1' matching user '12')
-    return allRecords.filter(r => r.id.startsWith(userId + '_')); 
-  },
-
-  async markAttendance(userId: string, timetableEntryId: string, date: string, status: 'PRESENT' | 'ABSENT'): Promise<void> {
-    const raw = localStorage.getItem(ATTENDANCE_KEY);
-    let allRecords: AttendanceRecord[] = raw ? JSON.parse(raw) : [];
-
-    // Check if exists
-    // Fix: Use userId + '_' for precise matching
-    const existingIndex = allRecords.findIndex(r => 
-      r.id.startsWith(userId + '_') && r.timetableEntryId === timetableEntryId && r.date === date
+    const records = safeParse<AttendanceRecord[]>(
+      localStorage.getItem(ATTENDANCE_KEY),
+      []
     );
 
-    if (existingIndex >= 0) {
-      allRecords[existingIndex].status = status;
+    // Backward-compatible: infer userId if missing
+    return records
+      .map(r => ({
+        ...r,
+        userId: r.userId ?? r.id.split('_')[0]
+      }))
+      .filter(r => r.userId === userId);
+  },
+
+  async markAttendance(
+    userId: string,
+    timetableEntryId: string,
+    date: string,
+    status: 'PRESENT' | 'ABSENT'
+  ): Promise<void> {
+    const records = safeParse<AttendanceRecord[]>(
+      localStorage.getItem(ATTENDANCE_KEY),
+      []
+    );
+
+    const index = records.findIndex(
+      r =>
+        (r.userId ?? r.id.split('_')[0]) === userId &&
+        r.timetableEntryId === timetableEntryId &&
+        r.date === date
+    );
+
+    if (index >= 0) {
+      records[index].status = status;
     } else {
-      allRecords.push({
-        id: `${userId}_${date}_${timetableEntryId}`,
+      records.push({
+        id: generateId(),
+        userId,
         timetableEntryId,
         date,
         status
       });
     }
 
-    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(allRecords));
+    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(records));
 
-    realtime.emit('ATTENDANCE_UPDATE', { 
-      userId, 
-      timetableEntryId, 
-      status,
-      timestamp: Date.now() 
+    realtime.emit('ATTENDANCE_UPDATE', {
+      userId,
+      date,
+      timetableEntryId,
+      status
     });
   },
 
-  // Holidays
+  /* ---------------- HOLIDAYS ---------------- */
+
   async getHolidays(userId: string): Promise<HolidayRecord[]> {
-    const raw = localStorage.getItem(HOLIDAYS_KEY);
-    const allHolidays: HolidayRecord[] = raw ? JSON.parse(raw) : [];
-    return allHolidays.filter(h => h.userId === userId);
+    const holidays = safeParse<HolidayRecord[]>(
+      localStorage.getItem(HOLIDAYS_KEY),
+      []
+    );
+    return holidays.filter(h => h.userId === userId);
   },
 
   async toggleHoliday(userId: string, date: string): Promise<boolean> {
-    const rawHolidays = localStorage.getItem(HOLIDAYS_KEY);
-    let allHolidays: HolidayRecord[] = rawHolidays ? JSON.parse(rawHolidays) : [];
-    
-    const existingIndex = allHolidays.findIndex(h => h.userId === userId && h.date === date);
+    const holidays = safeParse<HolidayRecord[]>(
+      localStorage.getItem(HOLIDAYS_KEY),
+      []
+    );
+
+    const index = holidays.findIndex(h => h.userId === userId && h.date === date);
     let isHoliday = false;
 
-    if (existingIndex >= 0) {
-      // Remove holiday
-      allHolidays.splice(existingIndex, 1);
-      isHoliday = false;
+    if (index >= 0) {
+      holidays.splice(index, 1);
     } else {
-      // Add holiday
-      allHolidays.push({ id: generateId(), userId, date });
+      holidays.push({ id: generateId(), userId, date });
       isHoliday = true;
 
-      // CRITICAL: Remove any attendance records for this day so they don't count in calculation
-      const rawAttendance = localStorage.getItem(ATTENDANCE_KEY);
-      if (rawAttendance) {
-        try {
-          const allRecords: AttendanceRecord[] = JSON.parse(rawAttendance);
-          // We filter OUT records that belong to this user AND this date
-          const filteredRecords = allRecords.filter(r => {
-             const isUserRecord = r.id.startsWith(userId + '_');
-             const isDateMatch = r.date === date;
-             // If it's this user's record on this date, we want to REMOVE it (return false)
-             return !(isUserRecord && isDateMatch);
-          });
-          localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(filteredRecords));
-        } catch (e) {
-          console.error("Failed to clear attendance for holiday", e);
-        }
-      }
+      // Remove attendance for that day
+      const records = safeParse<AttendanceRecord[]>(
+        localStorage.getItem(ATTENDANCE_KEY),
+        []
+      );
+
+      const filtered = records.filter(
+        r => !((r.userId ?? r.id.split('_')[0]) === userId && r.date === date)
+      );
+
+      localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(filtered));
     }
 
-    localStorage.setItem(HOLIDAYS_KEY, JSON.stringify(allHolidays));
-    
-    realtime.emit('ATTENDANCE_UPDATE', { 
-      userId, 
-      timestamp: Date.now() 
-    });
+    localStorage.setItem(HOLIDAYS_KEY, JSON.stringify(holidays));
+
+    realtime.emit('HOLIDAY_UPDATE', { userId, date, isHoliday });
 
     return isHoliday;
   }
