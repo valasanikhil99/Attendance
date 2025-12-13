@@ -1,91 +1,47 @@
-export interface RealtimeEvent<T = unknown> {
+export interface RealtimeEvent {
   type: string;
-  payload: T;
+  payload: any;
   timestamp: number;
-  senderId: string;
 }
 
-type Listener<T = unknown> = (event: RealtimeEvent<T>) => void;
+type Listener = (event: RealtimeEvent) => void;
 
 class RealtimeService {
-  private channel?: BroadcastChannel;
-  private listeners = new Set<Listener>();
-  private senderId: string;
+  private channel: BroadcastChannel;
+  private listeners: Set<Listener>;
 
   constructor() {
-    this.senderId = crypto.randomUUID();
-
-    // Guard for environments without BroadcastChannel (SSR / old browsers)
-    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) {
-      console.warn('BroadcastChannel not supported in this environment');
-      return;
-    }
-
+    // BroadcastChannel allows communication between different tabs/windows
+    // This simulates a WebSocket connection sharing state across clients
     this.channel = new BroadcastChannel('classtrack_sync_channel');
-
+    this.listeners = new Set();
+    
     this.channel.onmessage = (msg) => {
-      const event = msg.data as RealtimeEvent;
-
-      // Basic validation
-      if (!event || typeof event.type !== 'string') return;
-
-      // Ignore events emitted by this tab
-      if (event.senderId === this.senderId) return;
-
-      this.notify(event);
+      this.notifyLocal(msg.data);
     };
   }
 
-  /**
-   * Emit an event to other tabs and local listeners
-   */
-  emit<T>(type: string, payload: T) {
-    const event: RealtimeEvent<T> = {
+  // Publish an event to all listeners (local and other tabs)
+  emit(type: string, payload: any) {
+    const event: RealtimeEvent = {
       type,
       payload,
-      timestamp: Date.now(),
-      senderId: this.senderId
+      timestamp: Date.now()
     };
-
-    // Notify local listeners immediately
-    this.notify(event);
-
-    // Broadcast to other tabs
-    this.channel?.postMessage(event);
+    this.channel.postMessage(event);
+    this.notifyLocal(event);
   }
 
-  /**
-   * Subscribe to realtime events
-   */
-  subscribe<T>(listener: Listener<T>) {
-    this.listeners.add(listener as Listener);
-
+  subscribe(listener: Listener) {
+    this.listeners.add(listener);
     return () => {
-      this.listeners.delete(listener as Listener);
+      this.listeners.delete(listener);
     };
   }
 
-  /**
-   * Cleanup (important for HMR)
-   */
-  destroy() {
-    this.listeners.clear();
-    this.channel?.close();
+  private notifyLocal(event: RealtimeEvent) {
+    this.listeners.forEach(l => l(event));
   }
-
-  private notify(event: RealtimeEvent) {
-    this.listeners.forEach(listener => {
-      try {
-        listener(event);
-      } catch (err) {
-        console.error('Realtime listener error:', err);
-      }
-    });
-  }
-}
-
-export const realtime = new RealtimeService();
-
 }
 
 export const realtime = new RealtimeService();

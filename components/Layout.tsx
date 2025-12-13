@@ -1,24 +1,33 @@
-import React from 'react';
-import { Home, CalendarCheck, LogOut, CalendarDays } from 'lucide-react';
-
-type Tab = 'dashboard' | 'today' | 'calendar';
+import React, { useState, useEffect } from 'react';
+import { Home, CalendarCheck, LogOut, CalendarDays, Bell, BellOff } from 'lucide-react';
+import { NotificationService } from '../services/notificationService';
 
 interface LayoutProps {
   children: React.ReactNode;
-  activeTab: Tab;
-  onTabChange: (tab: Tab) => void;
+  activeTab: 'dashboard' | 'today' | 'calendar';
+  onTabChange: (tab: 'dashboard' | 'today' | 'calendar') => void;
   onLogout: () => void;
+  userName?: string;
 }
 
-const Layout: React.FC<LayoutProps> = ({
-  children,
-  activeTab,
-  onTabChange,
-  onLogout
-}) => {
-  const handleLogout = () => {
-    if (window.confirm('Are you sure you want to logout?')) {
-      onLogout();
+const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, onLogout, userName }) => {
+  const [permission, setPermission] = useState<NotificationPermission>('default');
+
+  useEffect(() => {
+    setPermission(NotificationService.getPermission());
+  }, []);
+
+  const handleNotificationToggle = async () => {
+    if (permission === 'granted') {
+      // Browsers don't allow resetting permission programmatically, 
+      // but we can show a message or handle logic here.
+      alert('Notifications are enabled. You can disable them in your browser settings.');
+    } else {
+      const granted = await NotificationService.requestPermission();
+      setPermission(granted ? 'granted' : 'denied');
+      if (granted) {
+        NotificationService.send('Notifications Enabled', 'You will now receive reminders to mark your attendance.');
+      }
     }
   };
 
@@ -27,89 +36,74 @@ const Layout: React.FC<LayoutProps> = ({
       {/* Header */}
       <header className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-md mx-auto px-4 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-brand-600">
-              ClassTrack
-            </h1>
-            <div className="flex items-center gap-1 bg-green-50 px-2 py-0.5 rounded-full border border-green-100">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-              </span>
-              <span className="text-[10px] font-bold text-green-700 uppercase tracking-wide">
-                Live
-              </span>
+          <div className="flex flex-col justify-center">
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-brand-600 leading-none">ClassTrack</h1>
+              <div className="flex items-center gap-1 bg-green-50 px-1.5 py-0.5 rounded-full border border-green-100">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
+                </span>
+              </div>
             </div>
+            {userName && (
+              <p className="text-xs text-gray-500 font-medium mt-0.5">Hi, {userName}</p>
+            )}
           </div>
-
-          <button
-            onClick={handleLogout}
-            aria-label="Logout"
-            className="p-2 text-gray-500 hover:text-red-500"
-          >
-            <LogOut size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={handleNotificationToggle}
+              className={`p-2 rounded-full transition-colors ${
+                permission === 'granted' 
+                  ? 'text-brand-500 bg-brand-50 hover:bg-brand-100' 
+                  : 'text-gray-400 hover:bg-gray-100'
+              }`}
+              title={permission === 'granted' ? 'Notifications Enabled' : 'Enable Notifications'}
+            >
+              {permission === 'granted' ? <Bell size={20} /> : <BellOff size={20} />}
+            </button>
+            <button onClick={onLogout} className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors">
+              <LogOut size={20} />
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Disclaimer */}
       <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-xs text-yellow-800 text-center">
-        Unofficial Tool. Data is stored locally on this device.
+        ⚠️ Unofficial Tool. Data is stored locally on this device.
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto pb-20">
+      <main className="flex-1 overflow-y-auto pb-24">
         <div className="max-w-md mx-auto p-4">
           {children}
         </div>
       </main>
 
-      {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 w-full bg-white border-t border-gray-200 z-20">
+      {/* Bottom Nav */}
+      <nav className="fixed bottom-0 w-full bg-white border-t border-gray-200 pb-safe z-20">
         <div className="max-w-md mx-auto flex justify-around">
-          <button
-            aria-label="Today"
+          <button 
             onClick={() => onTabChange('today')}
-            className={`flex flex-col items-center p-3 w-1/3 ${
-              activeTab === 'today'
-                ? 'text-brand-600'
-                : 'text-gray-400'
-            }`}
+            className={`flex flex-col items-center p-3 w-1/3 ${activeTab === 'today' ? 'text-brand-600' : 'text-gray-400'}`}
           >
             <CalendarCheck size={24} />
-            <span className="text-[10px] mt-1 font-medium">
-              Today
-            </span>
+            <span className="text-[10px] mt-1 font-medium">Today</span>
           </button>
-
-          <button
-            aria-label="Calendar"
+          <button 
             onClick={() => onTabChange('calendar')}
-            className={`flex flex-col items-center p-3 w-1/3 ${
-              activeTab === 'calendar'
-                ? 'text-brand-600'
-                : 'text-gray-400'
-            }`}
+            className={`flex flex-col items-center p-3 w-1/3 ${activeTab === 'calendar' ? 'text-brand-600' : 'text-gray-400'}`}
           >
             <CalendarDays size={24} />
-            <span className="text-[10px] mt-1 font-medium">
-              History
-            </span>
+            <span className="text-[10px] mt-1 font-medium">History</span>
           </button>
-
-          <button
-            aria-label="Dashboard"
+          <button 
             onClick={() => onTabChange('dashboard')}
-            className={`flex flex-col items-center p-3 w-1/3 ${
-              activeTab === 'dashboard'
-                ? 'text-brand-600'
-                : 'text-gray-400'
-            }`}
+            className={`flex flex-col items-center p-3 w-1/3 ${activeTab === 'dashboard' ? 'text-brand-600' : 'text-gray-400'}`}
           >
             <Home size={24} />
-            <span className="text-[10px] mt-1 font-medium">
-              Stats
-            </span>
+            <span className="text-[10px] mt-1 font-medium">Stats</span>
           </button>
         </div>
       </nav>

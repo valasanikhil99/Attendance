@@ -1,34 +1,29 @@
 import { AttendanceRecord, User, HolidayRecord } from '../types';
 import { realtime } from './realtimeService';
+import { TIMETABLE, TERM_START_DATE } from '../constants';
+import { getDayIndex, getTodayDateString } from '../utils/dateUtils';
 
 const USERS_KEY = 'classtrack_users';
 const ATTENDANCE_KEY = 'classtrack_attendance';
 const HOLIDAYS_KEY = 'classtrack_holidays';
 const SESSION_KEY = 'classtrack_session';
 
-const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+// Helper to simulate network delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const safeParse = <T>(raw: string | null, fallback: T): T => {
-  try {
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
-};
-
-const generateId = () =>
-  crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36);
+// Safer ID generator that works in all contexts
+const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
 
 export const StorageService = {
-  /* ---------------- AUTH ---------------- */
-
+  // User Auth
   async login(rollNumber: string, password: string): Promise<User | null> {
-    await delay(300);
-    if (!password) return null;
-
-    const users = safeParse<User[]>(localStorage.getItem(USERS_KEY), []);
+    await delay(500);
+    const usersRaw = localStorage.getItem(USERS_KEY);
+    const users: User[] = usersRaw ? JSON.parse(usersRaw) : [];
+    
+    // For demo purposes, password check is skipped or basic. 
+    // In real app, this would verify hash.
     const user = users.find(u => u.rollNumber === rollNumber);
-
     if (user) {
       localStorage.setItem(SESSION_KEY, JSON.stringify(user));
       return user;
@@ -37,131 +32,184 @@ export const StorageService = {
   },
 
   async register(name: string, rollNumber: string, password: string): Promise<User> {
-    await delay(300);
-    if (!password) throw new Error('Password required');
-
-    const users = safeParse<User[]>(localStorage.getItem(USERS_KEY), []);
-
-    if (users.some(u => u.rollNumber === rollNumber)) {
-      throw new Error('User already exists');
+    await delay(500);
+    const usersRaw = localStorage.getItem(USERS_KEY);
+    const users: User[] = usersRaw ? JSON.parse(usersRaw) : [];
+    
+    if (users.find(u => u.rollNumber === rollNumber)) {
+      throw new Error("User already exists");
     }
 
     const newUser: User = { id: generateId(), name, rollNumber };
-    users.push(newUser);
-
+    users.push(newUser); // In real app, store hashed password
     localStorage.setItem(USERS_KEY, JSON.stringify(users));
     localStorage.setItem(SESSION_KEY, JSON.stringify(newUser));
-
     return newUser;
   },
 
   async logout(): Promise<void> {
-    await delay(100);
     localStorage.removeItem(SESSION_KEY);
   },
 
   async getSession(): Promise<User | null> {
-    return safeParse<User | null>(localStorage.getItem(SESSION_KEY), null);
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
   },
 
-  /* ---------------- ATTENDANCE ---------------- */
-
+  // Attendance
   async getAttendance(userId: string): Promise<AttendanceRecord[]> {
-    const records = safeParse<AttendanceRecord[]>(
-      localStorage.getItem(ATTENDANCE_KEY),
-      []
-    );
-
-    // Backward-compatible: infer userId if missing
-    return records
-      .map(r => ({
-        ...r,
-        userId: r.userId ?? r.id.split('_')[0]
-      }))
-      .filter(r => r.userId === userId);
+    const raw = localStorage.getItem(ATTENDANCE_KEY);
+    const allRecords: AttendanceRecord[] = raw ? JSON.parse(raw) : [];
+    // Fix: Use userId + '_' to prevent partial matches (e.g. user '1' matching user '12')
+    return allRecords.filter(r => r.id.startsWith(userId + '_')); 
   },
 
-  async markAttendance(
-    userId: string,
-    timetableEntryId: string,
-    date: string,
-    status: 'PRESENT' | 'ABSENT'
-  ): Promise<void> {
-    const records = safeParse<AttendanceRecord[]>(
-      localStorage.getItem(ATTENDANCE_KEY),
-      []
+  async markAttendance(userId: string, timetableEntryId: string, date: string, status: 'PRESENT' | 'ABSENT'): Promise<void> {
+    const raw = localStorage.getItem(ATTENDANCE_KEY);
+    let allRecords: AttendanceRecord[] = raw ? JSON.parse(raw) : [];
+
+    // Check if exists
+    // Fix: Use userId + '_' for precise matching
+    const existingIndex = allRecords.findIndex(r => 
+      r.id.startsWith(userId + '_') && r.timetableEntryId === timetableEntryId && r.date === date
     );
 
-    const index = records.findIndex(
-      r =>
-        (r.userId ?? r.id.split('_')[0]) === userId &&
-        r.timetableEntryId === timetableEntryId &&
-        r.date === date
-    );
-
-    if (index >= 0) {
-      records[index].status = status;
+    if (existingIndex >= 0) {
+      allRecords[existingIndex].status = status;
     } else {
-      records.push({
-        id: generateId(),
-        userId,
+      allRecords.push({
+        id: `${userId}_${date}_${timetableEntryId}`,
         timetableEntryId,
         date,
         status
       });
     }
 
-    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(records));
+    localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(allRecords));
 
-    realtime.emit('ATTENDANCE_UPDATE', {
-      userId,
-      date,
-      timetableEntryId,
-      status
+    realtime.emit('ATTENDANCE_UPDATE', { 
+      userId, 
+      timetableEntryId, 
+      status,
+      timestamp: Date.now() 
     });
   },
 
-  /* ---------------- HOLIDAYS ---------------- */
+  // Identify dates where no action was taken (Pending)
+  async getMissingDates(userId: string): Promise<string[]> {
+    // 1. Load all data
+    const rawAtt = localStorage.getItem(ATTENDANCE_KEY);
+    const rawHol = localStorage.getItem(HOLIDAYS_KEY);
+    const allRecords: AttendanceRecord[] = rawAtt ? JSON.parse(rawAtt) : [];
+    const allHolidays: HolidayRecord[] = rawHol ? JSON.parse(rawHol) : [];
 
-  async getHolidays(userId: string): Promise<HolidayRecord[]> {
-    const holidays = safeParse<HolidayRecord[]>(
-      localStorage.getItem(HOLIDAYS_KEY),
-      []
+    const userHolidays = new Set(
+      allHolidays
+        .filter(h => h.userId === userId)
+        .map(h => h.date)
     );
-    return holidays.filter(h => h.userId === userId);
+
+    const missingDates: string[] = [];
+
+    // 2. Determine Date Range (Term Start -> Yesterday)
+    const todayStr = getTodayDateString();
+    
+    // Parse term start
+    const [startYear, startMonth, startDay] = TERM_START_DATE.split('-').map(Number);
+    const itrDate = new Date(startYear, startMonth - 1, startDay);
+    
+    // Loop until we reach today (exclusive)
+    while (true) {
+      // Format current iteration date to YYYY-MM-DD
+      const y = itrDate.getFullYear();
+      const m = String(itrDate.getMonth() + 1).padStart(2, '0');
+      const d = String(itrDate.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${d}`;
+
+      if (dateStr >= todayStr) break; // Stop if we reach today or future
+
+      // Logic:
+      // 1. Skip Holidays
+      // 2. Skip Sundays
+      // 3. Skip if ANY records exist for this day (even partial attendance is fine)
+      
+      if (!userHolidays.has(dateStr)) {
+        const dayIndex = itrDate.getDay();
+        
+        if (dayIndex !== 0) { // Not Sunday
+          // Check if there are any classes scheduled for this day index in the timetable
+          const hasClasses = TIMETABLE.some(t => t.dayIndex === dayIndex);
+          
+          if (hasClasses) {
+            // Check if ANY record exists for this date + user
+            const hasRecord = allRecords.some(r => 
+              r.id.startsWith(userId + '_') && 
+              r.date === dateStr
+            );
+
+            if (!hasRecord) {
+              missingDates.push(dateStr);
+            }
+          }
+        }
+      }
+
+      // Move to next day
+      itrDate.setDate(itrDate.getDate() + 1);
+    }
+
+    // Sort descending (most recent missing day first)
+    return missingDates.sort((a, b) => b.localeCompare(a));
+  },
+
+  // Holidays
+  async getHolidays(userId: string): Promise<HolidayRecord[]> {
+    const raw = localStorage.getItem(HOLIDAYS_KEY);
+    const allHolidays: HolidayRecord[] = raw ? JSON.parse(raw) : [];
+    return allHolidays.filter(h => h.userId === userId);
   },
 
   async toggleHoliday(userId: string, date: string): Promise<boolean> {
-    const holidays = safeParse<HolidayRecord[]>(
-      localStorage.getItem(HOLIDAYS_KEY),
-      []
-    );
-
-    const index = holidays.findIndex(h => h.userId === userId && h.date === date);
+    const rawHolidays = localStorage.getItem(HOLIDAYS_KEY);
+    let allHolidays: HolidayRecord[] = rawHolidays ? JSON.parse(rawHolidays) : [];
+    
+    const existingIndex = allHolidays.findIndex(h => h.userId === userId && h.date === date);
     let isHoliday = false;
 
-    if (index >= 0) {
-      holidays.splice(index, 1);
+    if (existingIndex >= 0) {
+      // Remove holiday
+      allHolidays.splice(existingIndex, 1);
+      isHoliday = false;
     } else {
-      holidays.push({ id: generateId(), userId, date });
+      // Add holiday
+      allHolidays.push({ id: generateId(), userId, date });
       isHoliday = true;
 
-      // Remove attendance for that day
-      const records = safeParse<AttendanceRecord[]>(
-        localStorage.getItem(ATTENDANCE_KEY),
-        []
-      );
-
-      const filtered = records.filter(
-        r => !((r.userId ?? r.id.split('_')[0]) === userId && r.date === date)
-      );
-
-      localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(filtered));
+      // CRITICAL: Remove any attendance records for this day so they don't count in calculation
+      const rawAttendance = localStorage.getItem(ATTENDANCE_KEY);
+      if (rawAttendance) {
+        try {
+          const allRecords: AttendanceRecord[] = JSON.parse(rawAttendance);
+          // We filter OUT records that belong to this user AND this date
+          const filteredRecords = allRecords.filter(r => {
+             const isUserRecord = r.id.startsWith(userId + '_');
+             const isDateMatch = r.date === date;
+             // If it's this user's record on this date, we want to REMOVE it (return false)
+             return !(isUserRecord && isDateMatch);
+          });
+          localStorage.setItem(ATTENDANCE_KEY, JSON.stringify(filteredRecords));
+        } catch (e) {
+          console.error("Failed to clear attendance for holiday", e);
+        }
+      }
     }
 
-    localStorage.setItem(HOLIDAYS_KEY, JSON.stringify(holidays));
-
-    realtime.emit('HOLIDAY_UPDATE', { userId, date, isHoliday });
+    localStorage.setItem(HOLIDAYS_KEY, JSON.stringify(allHolidays));
+    
+    realtime.emit('ATTENDANCE_UPDATE', { 
+      userId, 
+      timestamp: Date.now() 
+    });
 
     return isHoliday;
   }

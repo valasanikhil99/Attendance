@@ -1,15 +1,16 @@
 import React, { useMemo } from 'react';
-import { AttendanceRecord, OverallStats, SubjectStats } from '../types';
+import { AttendanceRecord, OverallStats, SubjectStats, HolidayRecord } from '../types';
 import { calculateStats } from '../utils/calculations';
 import PercentageRing from '../components/PercentageRing';
 import { AlertTriangle, CheckCircle, ShieldAlert } from 'lucide-react';
 
 interface DashboardProps {
   records: AttendanceRecord[];
+  holidays: HolidayRecord[];
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ records }) => {
-  const { overall, bySubject } = useMemo(() => calculateStats(records), [records]);
+const Dashboard: React.FC<DashboardProps> = ({ records, holidays }) => {
+  const { overall, bySubject } = useMemo(() => calculateStats(records, holidays), [records, holidays]);
 
   const getStatusColor = (status: OverallStats['status']) => {
     switch (status) {

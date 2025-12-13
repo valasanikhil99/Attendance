@@ -8,12 +8,13 @@ interface CalendarViewProps {
   userId: string;
   records: AttendanceRecord[];
   holidays: HolidayRecord[];
+  missingDates?: string[];
   onRefresh?: () => void;
 }
 
 type DayStatus = 'full' | 'partial' | 'absent' | 'empty' | 'weekend' | 'holiday' | 'disabled';
 
-const CalendarView: React.FC<CalendarViewProps> = ({ userId, records, holidays, onRefresh }) => {
+const CalendarView: React.FC<CalendarViewProps> = ({ userId, records, holidays, missingDates = [], onRefresh }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   // State to track if a specific date is opened for editing
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -175,18 +176,25 @@ const CalendarView: React.FC<CalendarViewProps> = ({ userId, records, holidays, 
             const isFuture = date > today;
             const status = getDayStatus(date);
             const isToday = date.getTime() === today.getTime();
+            
+            const dateStr = formatDateLocal(date);
+            const isMissing = missingDates.includes(dateStr);
 
             return (
               <div 
                 key={date.getDate()}
                 onClick={() => handleDateClick(date, status, isFuture)}
                 className={`
-                  aspect-square rounded-lg flex items-center justify-center text-sm border
+                  aspect-square rounded-lg flex items-center justify-center text-sm border relative
                   ${getStatusColor(status, isFuture)}
                   ${isToday && status !== 'disabled' && !isFuture ? 'ring-2 ring-brand-500 ring-offset-1' : ''}
+                  ${isMissing ? 'ring-2 ring-amber-300 ring-offset-1 z-10' : ''}
                 `}
               >
                 {date.getDate()}
+                {isMissing && (
+                  <div className="absolute top-1 right-1 w-1.5 h-1.5 bg-amber-500 rounded-full"></div>
+                )}
               </div>
             );
           })}
@@ -209,6 +217,10 @@ const CalendarView: React.FC<CalendarViewProps> = ({ userId, records, holidays, 
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 rounded bg-purple-100 border border-purple-200"></div>
             <span className="text-xs text-gray-600">Holiday</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-amber-500"></div>
+            <span className="text-xs text-gray-600">Missing Info</span>
           </div>
         </div>
       </div>
