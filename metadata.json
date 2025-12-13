@@ -1,0 +1,5 @@
+{
+  "name": "ClassTrack",
+  "description": "A student-focused attendance tracking application with timetable integration and weighted attendance calculations.",
+  "requestFramePermissions": []
+}
